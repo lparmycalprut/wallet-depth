@@ -700,3 +700,48 @@ class FeeVolumeExcessRuleTest(unittest.TestCase):
     def test_selisih_dihitung_fee_volume_dikurangi_tarif_dasar(self):
         row = self._row_with_excess(0.40)
         self.assertAlmostEqual(pf.fee_volume_excess(row), 0.40, places=6)
+
+
+class ExcessRowsTest(unittest.TestCase):
+    """RINGKASAN di halaman memuat pool SELISIH BESAR (fee/volume − tarif > 0,25) tanpa filter lain
+    (permintaan user, 2026-11-25). Alert Telegram tetap FEE PRINTER saja."""
+
+    def _ex(self, pool, symbol, excess, *, vol=2.0, fa=10.0, net=20_000.0, top_holders=None):
+        row = _row(pool, symbol, fee=2.0, vol=vol, fa=fa, net=net)
+        row["fee"] = row["volume"] * (2.0 + excess) / 100.0
+        if top_holders is not None:
+            row["token_x"]["top_holders_pct"] = top_holders
+        return row
+
+    def _result(self):
+        rows = [
+            self._ex("A" * 44, "JIMMY", 0.85, vol=3.67, fa=15.0, net=366_000.0),  # gagal volatility
+            self._ex("B" * 44, "MIHAO", 0.40, net=-31_000.0),                      # net negatif
+            self._ex("C" * 44, "ANSEM", 0.79, top_holders=57.8),                  # blokir keamanan
+            self._ex("D" * 44, "FP", 0.10),                                        # lolos FEE PRINTER
+            self._ex("E" * 44, "KECIL", 0.20),                                     # di bawah ambang
+            self._ex("F" * 44, "PAS", 0.25),                                       # tepat ambang: bukan selisih besar
+        ]
+        return _scan(rows)
+
+    def test_selisih_besar_urut_terbesar_dan_tanpa_filter_lain(self):
+        symbols = [r["symbol"] for r in pf.excess_rows(self._result())]
+        self.assertEqual(symbols, ["JIMMY", "ANSEM", "MIHAO"])
+
+    def test_ringkasan_halaman_fee_printer_dulu_lalu_selisih_besar(self):
+        pairs = [(r["symbol"], label) for r, label in pf.summary_table_rows(self._result())]
+        self.assertEqual(pairs, [("FP", pf.SUMMARY_LABEL),
+                                 ("KECIL", pf.SUMMARY_LABEL),
+                                 ("PAS", pf.SUMMARY_LABEL),
+                                 ("JIMMY", pf.SUMMARY_LABEL_EXCESS),
+                                 ("ANSEM", pf.SUMMARY_LABEL_EXCESS),
+                                 ("MIHAO", pf.SUMMARY_LABEL_EXCESS)])
+
+    def test_alert_tetap_fee_printer_saja(self):
+        pairs = [(r["symbol"], label) for r, label in pf.summary_rows(self._result())]
+        self.assertEqual(pairs, [("FP", pf.SUMMARY_LABEL), ("KECIL", pf.SUMMARY_LABEL), ("PAS", pf.SUMMARY_LABEL)])
+
+    def test_tanpa_data_selisih_tidak_masuk(self):
+        row = self._ex("G" * 44, "NOFEE", 0.5)
+        row["volume"] = 0.0
+        self.assertEqual(pf.excess_rows(_scan([row])), [])

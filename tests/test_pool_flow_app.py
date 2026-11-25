@@ -247,3 +247,20 @@ class SummarySelisihTest(unittest.TestCase):
         row = pf.evaluate_pool(raw)
         html = ui._summary_table_html([(row, pf.SUMMARY_LABEL)])
         self.assertIn("0,39%", html)
+
+
+class SummarySelisihBesarTest(unittest.TestCase):
+    def test_ringkasan_memberi_label_selisih_besar_dan_peringatan_blokir(self):
+        import pool_flow_ui as ui
+        from tests.test_pool_flow import _row, _scan
+        def ex(pool, symbol, excess, top=None):
+            row = _row(pool, symbol, fee=2.0, vol=2.0, fa=10.0, net=20_000.0)
+            row["fee"] = row["volume"] * (2.0 + excess) / 100.0
+            if top is not None:
+                row["token_x"]["top_holders_pct"] = top
+            return row
+        result = _scan([ex("H" * 44, "ANSEM", 0.79, top=57.8)])
+        html = ui._summary_table_html(pf.summary_table_rows(result))
+        self.assertIn("SELISIH BESAR", html)
+        self.assertIn("top holders &gt; 30%", html)
+        self.assertIn(">0,79%</td>", html)
