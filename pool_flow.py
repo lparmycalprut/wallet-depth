@@ -408,6 +408,19 @@ def fee_active_per_volatility(item: dict):
     return fee_active / vol
 
 
+def fee_volume_pct(item: dict):
+    """Fee/volume (%) = fee 24H ÷ volume 24H × 100 (tarif fee efektif per dolar yang diperdagangkan).
+
+    ``None`` bila fee atau volume tidak ada, atau volume ≤ 0.
+    """
+    activity = item.get("activity") or {}
+    fee = activity.get("fee")
+    volume = activity.get("volume")
+    if fee is None or volume is None or volume <= 0:
+        return None
+    return fee / volume * 100.0
+
+
 def fee_printer_ok(item: dict) -> bool:
     """Syarat FEE PRINTER (permintaan user, 2026-11-24), inklusif di semua batas:
 

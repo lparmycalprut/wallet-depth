@@ -53,7 +53,7 @@ def _row(pool, symbol, *, fee=2.0, tvl=50_000.0, active_tvl=20_000.0, holders=2_
             "base_token_holders": holders, "open_positions": open_pos,
             "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa,
             "net_deposits": net,
-            "volume": volume, "avg_volume": volume / 720.0,
+            "volume": volume, "fee": volume * fee / 100.0, "avg_volume": volume / 720.0,
             "swap_count": swaps, "unique_traders": traders,
             "fee_tvl_ratio": ftvl}
 
@@ -657,3 +657,18 @@ class StateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FeeVolumeTest(unittest.TestCase):
+    def test_fee_volume_dihitung_fee_dibagi_volume(self):
+        # _row: fee = volume × fee_pct ÷ 100 → fee/volume = fee_pct
+        row = pf.evaluate_pool(_fp("V" * 44, fa=8.0, vol=2.0))
+        self.assertAlmostEqual(pf.fee_volume_pct(row), 2.0)
+
+    def test_fee_volume_kosong_bila_volume_nol_atau_tanpa_fee(self):
+        row = pf.evaluate_pool(_fp("W" * 44, fa=8.0, vol=2.0))
+        row["activity"]["volume"] = 0.0
+        self.assertIsNone(pf.fee_volume_pct(row))
+        row["activity"]["volume"] = 1000.0
+        row["activity"]["fee"] = None
+        self.assertIsNone(pf.fee_volume_pct(row))

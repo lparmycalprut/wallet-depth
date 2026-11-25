@@ -23,7 +23,7 @@ FEE_PRINTER_TITLE_CLASS = "fee-printer-title"  # judul FEE PRINTER: hijau tua me
 SLOW_FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
 
-TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
+TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier", "Fee/volume",
                  "Volatility", "Fee/TVL", "Fee/active TVL", "Net deposit",
                  "Fee/active TVL ÷ volatility", "Avg volume/menit (pool)",
                  "Avg volume/menit ÷ TVL", "Avg fee/menit ÷ TVL",
@@ -190,6 +190,7 @@ def _fee_printer_table_html(rows: list, top_pool: str | None = None, accent: str
             _cell_token_html(row),
             _html.escape(pf.fmt_usd(row["tvl"])),
             _html.escape(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—"),
+            _html.escape(pf.fmt_pct2(pf.fee_volume_pct(row))),
             _html.escape(pf.fmt_pct2(row["volatility"])),
             _html.escape(pf.fmt_pct2(row.get("fee_tvl"))),
             _html.escape(pf.fmt_pct2(row.get("fee_active_tvl"))),
