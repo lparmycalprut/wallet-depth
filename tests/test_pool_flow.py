@@ -672,3 +672,31 @@ class FeeVolumeTest(unittest.TestCase):
         row["activity"]["volume"] = 1000.0
         row["activity"]["fee"] = None
         self.assertIsNone(pf.fee_volume_pct(row))
+
+
+class FeeVolumeExcessRuleTest(unittest.TestCase):
+    """Syarat selisih fee/volume − tarif dasar ≤ 0,25 poin (permintaan user, 2026-11-25)."""
+
+    def _row_with_excess(self, excess, pool="E" * 44):
+        # fee_pct (tarif dasar) = 2,0; fee/volume = 2,0 + excess (field mentah, sebelum evaluate_pool)
+        row = _fp(pool, fa=8.0, vol=2.0)
+        row["fee"] = row["volume"] * (2.0 + excess) / 100.0
+        return pf.evaluate_pool(row)
+
+    def test_selisih_di_bawah_ambang_lolos(self):
+        self.assertTrue(pf.fee_printer_ok(self._row_with_excess(0.10)))
+
+    def test_selisih_tepat_ambang_lolos_inklusif(self):
+        self.assertTrue(pf.fee_printer_ok(self._row_with_excess(0.25)))
+
+    def test_selisih_di_atas_ambang_gugur(self):
+        self.assertFalse(pf.fee_printer_ok(self._row_with_excess(0.26)))
+
+    def test_tanpa_data_fee_volume_gugur(self):
+        raw = _fp("F" * 44, fa=8.0, vol=2.0)
+        raw["volume"] = 0.0
+        self.assertFalse(pf.fee_printer_ok(pf.evaluate_pool(raw)))
+
+    def test_selisih_dihitung_fee_volume_dikurangi_tarif_dasar(self):
+        row = self._row_with_excess(0.40)
+        self.assertAlmostEqual(pf.fee_volume_excess(row), 0.40, places=6)

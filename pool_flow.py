@@ -4,7 +4,8 @@
 FEE PRINTER (permintaan user, 2026-11-24):
 - Listing Meteora pool-discovery, timeframe 24h, kategori top, dengan filter server
   (``flow_server_filter``, curl user) dan dua batas waktu yang dihitung ulang tiap scan.
-- Syarat lokal: volatility 0,01–3 %, fee/active TVL ≥ 2 × volatility, net deposit ≥ 10.000 USD.
+- Syarat lokal: volatility 0,01–3 %, fee/active TVL ≥ 2 × volatility, net deposit ≥ 10.000 USD,
+  dan fee/volume − tarif dasar ≤ 0,25 poin persentase (permintaan user, 2026-11-25).
 - Keamanan tetap: blokir bila mint/freeze authority aktif atau top holders > 30 %.
 - Urutan: fee/active TVL ÷ volatility terbesar dulu.
 - Alert Telegram (tiap 15 menit): RINGKASAN, atau heartbeat bila tidak ada pool.
@@ -35,6 +36,7 @@ FLOW_VOLATILITY_MEASURABLE_MIN = 0.01  # % — di bawah ini dianggap tidak teruk
 FLOW_MAX_VOLATILITY = 3.0  # % — volatility maksimal (inklusif)
 FLOW_FEE_ACTIVE_TVL_MULT = 2.0  # fee/active TVL ≥ 2 × volatility (inklusif)
 FLOW_MIN_NET_DEPOSITS = 10_000.0  # USD — net deposit minimal (inklusif)
+FLOW_MAX_FEE_VOLUME_EXCESS = 0.25  # poin persentase — fee/volume − tarif dasar maksimal (inklusif)
 
 # Filter server (curl user, 2026-11-24). Dua batas waktu dihitung ulang tiap scan (lihat flow_server_filter).
 FLOW_SERVER_MIN_MARKET_CAP = 20_000  # USD, market cap token base
@@ -421,12 +423,25 @@ def fee_volume_pct(item: dict):
     return fee / volume * 100.0
 
 
+def fee_volume_excess(item: dict):
+    """Fee/volume − tarif dasar (poin persentase). Selisih kecil = fee hampir seluruhnya dari tarif dasar.
+
+    ``None`` bila fee/volume atau tarif dasar (``fee_tier``) tidak ada.
+    """
+    ratio = fee_volume_pct(item)
+    base = item.get("fee_tier")
+    if ratio is None or base is None:
+        return None
+    return ratio - base
+
+
 def fee_printer_ok(item: dict) -> bool:
-    """Syarat FEE PRINTER (permintaan user, 2026-11-24), inklusif di semua batas:
+    """Syarat FEE PRINTER (permintaan user, 2026-11-24, selisih fee/volume ditambah 2026-11-25), inklusif:
 
     - volatility 0,01 % sampai 3 % (di bawah 0,01 % dianggap tidak terukur),
     - fee/active TVL ≥ 2 × volatility,
-    - net deposit ≥ +10.000 USD.
+    - net deposit ≥ +10.000 USD,
+    - fee/volume − tarif dasar ≤ 0,25 poin persentase.
     Pool tanpa salah satu nilai ini tidak lolos.
     """
     vol = item.get("volatility")
@@ -436,7 +451,10 @@ def fee_printer_ok(item: dict) -> bool:
         return False
     if not (FLOW_VOLATILITY_MEASURABLE_MIN <= vol <= FLOW_MAX_VOLATILITY):
         return False
-    return fee_active >= FLOW_FEE_ACTIVE_TVL_MULT * vol and net >= FLOW_MIN_NET_DEPOSITS
+    if not (fee_active >= FLOW_FEE_ACTIVE_TVL_MULT * vol and net >= FLOW_MIN_NET_DEPOSITS):
+        return False
+    excess = fee_volume_excess(item)
+    return excess is not None and excess <= FLOW_MAX_FEE_VOLUME_EXCESS
 
 
 def fee_printer_rows(passing: list) -> list:
