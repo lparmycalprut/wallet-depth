@@ -1,9 +1,9 @@
 {
   "version": 1,
   "best_alert": {
-    "next_no": 86,
+    "next_no": 87,
     "last_no": {
-      "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": 85,
+      "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": 86,
       "HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p": 4,
       "EUNbWXJwWhk8YgxbQa2Vf1Fzr7GDKG9cLRVDyz3iyjQG": 4,
       "DozADCRDH3KDJcspRxeXu9huidAy2NVpUBKUjN18bS6w": 3,
@@ -31,12 +31,12 @@
       "7Vf8HRDdfUdKLh1GKnchWPwSJ5t3n7aSbFK1imC5rb77": 21,
       "9iPNEVC3DuqDoCkpAVUayHjSHqDcW8Pb2HfcEJfiGjye": 23,
       "7iJ4TQikwJMZE93nsJanYTuYhpyGoaxKVH4Y8zf9CG63": 22,
-      "38XwbJPewvxWkcaW78YtLyVg6ZUUWttkALTykmUmSiWk": 85,
+      "38XwbJPewvxWkcaW78YtLyVg6ZUUWttkALTykmUmSiWk": 86,
       "6notA3Z9DEt9fEyBA7jb35gLbkYEBcaVN9qX5ASrHRF1": 32,
       "AAfeCt3twr7ZJNAmPHQoh1YdBWD3MBaHQspVnesQZzFE": 26,
       "E4hubXJx4vtJebyVqat4Q2WKTXGPHjCa16iqcBg8YEok": 36,
       "Cqqm1KxwAELT6t21dUQfDEecZrqZ6dgA7dK2ptK9oj5g": 79,
-      "HKfE9AfRahft9ZLzGPeigNSGb19FqeauucUuqnAw2Fae": 69
+      "HKfE9AfRahft9ZLzGPeigNSGb19FqeauucUuqnAw2Fae": 86
     }
   },
   "alerts": [
@@ -837,6 +837,16 @@
       "pools": [
         "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z",
         "38XwbJPewvxWkcaW78YtLyVg6ZUUWttkALTykmUmSiWk"
+      ]
+    },
+    {
+      "no": 86,
+      "kind": "summary",
+      "at": "2026-11-25T01:37:14Z",
+      "pools": [
+        "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z",
+        "38XwbJPewvxWkcaW78YtLyVg6ZUUWttkALTykmUmSiWk",
+        "HKfE9AfRahft9ZLzGPeigNSGb19FqeauucUuqnAw2Fae"
       ]
     }
   ]
