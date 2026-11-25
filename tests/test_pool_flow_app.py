@@ -212,3 +212,28 @@ class WorkflowAndPagesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SummaryTableColumnsTest(unittest.TestCase):
+    def test_ringkasan_memuat_fee_tier_fee_volume_dan_net_deposit(self):
+        import pool_flow_ui as ui
+        rows = pf.summary_rows(_scan_result())
+        html = ui._summary_table_html(rows)
+        header = html.split("<thead>", 1)[1].split("</thead>", 1)[0]
+        for title in ("Fee tier", "Fee/volume", "Net deposit", "Fee/active TVL ÷ volatility", "Peringatan keamanan"):
+            self.assertIn(title, header)
+        self.assertIn(">2%</td>", html)        # fee tier ALPHA
+        self.assertIn(">2,00%</td>", html)     # fee/volume ALPHA (fee_pct 2 → 2,00 %)
+        self.assertIn(">$25K</td>", html)      # net deposit ALPHA
+
+
+class SummaryWarningTest(unittest.TestCase):
+    def test_ringkasan_menampilkan_peringatan_keamanan(self):
+        import pool_flow_ui as ui
+        row = pf.evaluate_pool(_fp("K" * 44, fa=8.0, vol=2.0, symbol="KEEP"))
+        row["warnings"] = ["top holders 25,00%"]
+        html = ui._summary_table_html([(row, pf.SUMMARY_LABEL)])
+        self.assertIn("top holders 25,00%", html)
+        clean = pf.evaluate_pool(_fp("L" * 44, fa=8.0, vol=2.0, symbol="LEAN"))
+        clean["warnings"] = []
+        self.assertIn(">—</td>", ui._summary_table_html([(clean, pf.SUMMARY_LABEL)]))

@@ -68,7 +68,9 @@ def _render_scan_result(result: dict) -> None:
                        accent=SLOW_FEE_PRINTER_BORDER, builder=_fee_printer_table_html)
 
 
-SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/active TVL", "Volatility", "Fee/active TVL ÷ volatility"]
+SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee tier", "Fee/volume", "Net deposit",
+                   "Fee/active TVL", "Volatility", "Fee/active TVL ÷ volatility",
+                   "Peringatan keamanan"]
 SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: RINGKASAN (permintaan user, 2026-11-15)
 # Badge asal tabel: warna sama dengan judul/border tabel di halaman.
 _SUMMARY_BADGE = {
@@ -79,7 +81,7 @@ _SUMMARY_BADGE = {
 
 
 def _summary_table_html(entries: list) -> str:
-    """RINGKASAN compact: token/pool, asal tabel, fee/active TVL, volatility, fee/active ÷ volatility (2026-11-24)."""
+    """RINGKASAN compact: token/pool, asal tabel, fee tier, fee/volume, net deposit, fee/active TVL, volatility, fee/active ÷ volatility, peringatan keamanan."""
     body = []
     for row, label in entries:
         badge = (f"<span style='{_SUMMARY_BADGE.get(label, '')};padding:2px 10px;"
@@ -88,9 +90,13 @@ def _summary_table_html(entries: list) -> str:
         cells = [
             _cell_token_html(row),
             badge,
+            _html.escape(f"{row['fee_tier']:g}%" if row.get("fee_tier") is not None else "—"),
+            _html.escape(pf.fmt_pct2(pf.fee_volume_pct(row))),
+            _html.escape(pf.fmt_usd(row.get("net_deposits"))),
             _html.escape(pf.fmt_pct2(row.get("fee_active_tvl"))),
             _html.escape(pf.fmt_pct2(row.get("volatility"))),
             _html.escape(pf.fmt_times_plain(pf.fee_active_per_volatility(row))),
+            _html.escape("; ".join(row.get("warnings") or []) or "—"),
         ]
         body.append((cells, False))
     return _table_html(SUMMARY_HEADERS, body, SUMMARY_BORDER)
