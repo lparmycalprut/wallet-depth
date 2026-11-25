@@ -14,8 +14,8 @@ sys.path.insert(0, str(ROOT))
 import pool_flow as pf  # noqa: E402
 from tests.test_pool_flow import _fp  # noqa: E402
 
-FEE_A = _fp("A" * 44, fa=8.0, vol=2.0, net=25_000.0, symbol="ALPHA", mint="A" * 44)  # perkalian 16
-FEE_B = _fp("B" * 44, fa=6.0, vol=3.0, net=10_000.0, symbol="BETA", mint="B" * 44)   # perkalian 18
+FEE_A = _fp("A" * 44, fa=8.0, vol=2.0, net=25_000.0, symbol="ALPHA", mint="A" * 44)  # rasio 4
+FEE_B = _fp("B" * 44, fa=6.0, vol=3.0, net=10_000.0, symbol="BETA", mint="B" * 44)   # rasio 2
 OUT_OF_RULE = _fp("O" * 44, fa=30.0, vol=6.0, net=50_000.0, symbol="OUTX", mint="O" * 44)  # vol > 3
 LISTING = [FEE_A, FEE_B, OUT_OF_RULE]
 
@@ -30,7 +30,7 @@ class FeePrinterTableTest(unittest.TestCase):
         html = ui._fee_printer_table_html(pf.fee_printer_rows(_scan_result()["passing"]))
         header = html.split("<thead>", 1)[1].split("</thead>", 1)[0]
         for title in ("Volatility", "Fee/active TVL", "Net deposit",
-                      "Fee/active TVL × volatility", "Volume 24H (pool)"):
+                      "Fee/active TVL ÷ volatility", "Volume 24H (pool)"):
             self.assertIn(title, header)
         for title in ("Volume 12H", "Fee/TVL ÷ volatility", "Selisih fee/TVL", "Volatility 4H",
                       "Fee/TVL 4H", "Keseimbangan"):
@@ -42,13 +42,13 @@ class FeePrinterTableTest(unittest.TestCase):
         self.assertIn(">2,00%</td>", html)        # volatility ALPHA
         self.assertIn(">8,00%</td>", html)        # fee/active TVL ALPHA
         self.assertIn(">$25K</td>", html)         # net deposit ALPHA
-        self.assertIn(">16,00</td>", html)        # perkalian ALPHA
-        self.assertIn(">18,00</td>", html)        # perkalian BETA
+        self.assertIn(">4,00</td>", html)         # rasio ALPHA
+        self.assertIn(">2,00</td>", html)         # rasio BETA
 
-    def test_urut_perkalian_terbesar_dulu_di_tabel(self):
+    def test_urut_rasio_terbesar_dulu_di_tabel(self):
         import pool_flow_ui as ui
         html = ui._fee_printer_table_html(pf.fee_printer_rows(_scan_result()["passing"]))
-        self.assertLess(html.index("BETA"), html.index("ALPHA"))  # 18 sebelum 16
+        self.assertLess(html.index("ALPHA"), html.index("BETA"))  # 4 sebelum 2
 
     def test_pool_teratas_diberi_warna_kuning_tanpa_emoji(self):
         import pool_flow_ui as ui

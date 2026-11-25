@@ -2,7 +2,7 @@
 """Tes logika Scan ALL, FEE PRINTER (timeframe 24H) — tanpa jaringan.
 
 Aturan (permintaan user, 2026-11-24): volatility 0,01–3 %, fee/active TVL ≥ 2 × volatility,
-net deposit ≥ +10.000 USD. Urut fee/active TVL × volatility terbesar dulu.
+net deposit ≥ +10.000 USD. Urut fee/active TVL ÷ volatility terbesar dulu.
 Filter server = curl user (urutan parameter persis), dua batas waktu dihitung dari waktu scan.
 """
 import json
@@ -401,25 +401,26 @@ class FeePrinterRuleTest(unittest.TestCase):
 
 
 class FeePrinterOrderTest(unittest.TestCase):
-    def test_urut_perkalian_terbesar_dulu(self):
-        # perkalian fee/active TVL × volatility: A = 8, B = 9, C = 18
+    def test_urut_rasio_terbesar_dulu(self):
+        # fee/active TVL ÷ volatility: A = 2, B = 9, C = 4
         rows = [_fp("A" * 44, fa=4.0, vol=2.0, symbol="A"),
                 _fp("B" * 44, fa=9.0, vol=1.0, symbol="B"),
-                _fp("C" * 44, fa=6.0, vol=3.0, symbol="C")]
+                _fp("C" * 44, fa=12.0, vol=3.0, symbol="C")]
         result = _scan(rows)
         ordered = [r["symbol"] for r in pf.fee_printer_rows(result["passing"])]
-        self.assertEqual(ordered, ["C", "B", "A"])
+        self.assertEqual(ordered, ["B", "C", "A"])
 
     def test_seri_ikut_urutan_listing(self):
-        rows = [_fp("X" * 44, fa=4.0, vol=2.0, symbol="XX"),   # 8
-                _fp("Y" * 44, fa=8.0, vol=1.0, symbol="YY")]   # 8
+        rows = [_fp("X" * 44, fa=4.0, vol=2.0, symbol="XX"),   # 2
+                _fp("Y" * 44, fa=4.0, vol=2.0, symbol="YY")]   # 2
         result = _scan(rows)
         ordered = [r["symbol"] for r in pf.fee_printer_rows(result["passing"])]
         self.assertEqual(ordered, ["XX", "YY"])
 
-    def test_perkalian_dihitung_fee_active_kali_volatility(self):
+    def test_rasio_dihitung_fee_active_bagi_volatility(self):
         row = pf.evaluate_pool(_fp("P" * 44, fa=8.0, vol=2.5))
-        self.assertAlmostEqual(pf.fee_active_volatility_product(row), 20.0)
+        self.assertAlmostEqual(pf.fee_active_per_volatility(row), 3.2)
+        self.assertIsNone(pf.fee_active_per_volatility({"fee_active_tvl": 8.0, "volatility": 0.0}))
 
     def test_summary_hanya_pool_fee_printer_dengan_label(self):
         ok = _fp("S" * 44, fa=8.0, vol=2.0, symbol="OKK")
@@ -498,7 +499,7 @@ class AlertTest(unittest.TestCase):
         self.assertIn("fee/active TVL 8,00%", text)
         self.assertIn("volatility 2,00%", text)
         self.assertIn("net $25K", text)
-        self.assertIn("perkalian 16,00", text)
+        self.assertIn("fee/active ÷ volatility 4,00", text)
         self.assertIn("🆕 baru", text)
         self.assertNotIn("12H", text)
 

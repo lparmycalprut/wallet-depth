@@ -25,7 +25,7 @@ DEFAULT_BORDER = "rgba(128,128,128,.35)"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/TVL", "Fee/active TVL", "Net deposit",
-                 "Fee/active TVL × volatility", "Avg volume/menit (pool)",
+                 "Fee/active TVL ÷ volatility", "Avg volume/menit (pool)",
                  "Avg volume/menit ÷ TVL", "Avg fee/menit ÷ TVL",
                  "Volume 24H (pool)", "Peringatan keamanan"]
 
@@ -63,12 +63,12 @@ def _render_scan_result(result: dict) -> None:
     top_pool = top["pool"] if top else None
     st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
     st.markdown(f"*· {len(rows)} pool · volatility 0,01–3 % · fee/active TVL ≥ 2 × volatility · "
-                f"net deposit ≥ $10.000 · urut fee/active TVL × volatility terbesar dulu*")
+                f"net deposit ≥ $10.000 · urut fee/active TVL ÷ volatility terbesar dulu*")
     _render_pool_table(rows, "Tidak ada pool untuk FEE PRINTER.", top_pool,
                        accent=SLOW_FEE_PRINTER_BORDER, builder=_fee_printer_table_html)
 
 
-SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/active TVL", "Volatility", "Fee/active TVL × volatility"]
+SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/active TVL", "Volatility", "Fee/active TVL ÷ volatility"]
 SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: RINGKASAN (permintaan user, 2026-11-15)
 # Badge asal tabel: warna sama dengan judul/border tabel di halaman.
 _SUMMARY_BADGE = {
@@ -79,7 +79,7 @@ _SUMMARY_BADGE = {
 
 
 def _summary_table_html(entries: list) -> str:
-    """RINGKASAN compact: token/pool, asal tabel, fee/active TVL, volatility, perkalian (2026-11-24)."""
+    """RINGKASAN compact: token/pool, asal tabel, fee/active TVL, volatility, fee/active ÷ volatility (2026-11-24)."""
     body = []
     for row, label in entries:
         badge = (f"<span style='{_SUMMARY_BADGE.get(label, '')};padding:2px 10px;"
@@ -90,7 +90,7 @@ def _summary_table_html(entries: list) -> str:
             badge,
             _html.escape(pf.fmt_pct2(row.get("fee_active_tvl"))),
             _html.escape(pf.fmt_pct2(row.get("volatility"))),
-            _html.escape(pf.fmt_times_plain(pf.fee_active_volatility_product(row))),
+            _html.escape(pf.fmt_times_plain(pf.fee_active_per_volatility(row))),
         ]
         body.append((cells, False))
     return _table_html(SUMMARY_HEADERS, body, SUMMARY_BORDER)
@@ -179,7 +179,7 @@ def _table_html(headers: list, body: list, accent: str, *, align: list | None = 
 
 
 def _fee_printer_table_html(rows: list, top_pool: str | None = None, accent: str = DEFAULT_BORDER) -> str:
-    """Tabel FEE PRINTER (24H). Satu baris per pool, urut perkalian fee/active TVL × volatility (urutan dari pemanggil).
+    """Tabel FEE PRINTER (24H). Satu baris per pool, urut fee/active TVL ÷ volatility (urutan dari pemanggil).
 
     Baris pool teratas (``top_pool``, avg volume/menit ÷ TVL terbesar) diberi latar kuning.
     Judul boleh turun baris; angka rata kanan; kolom Token menempel saat digeser.
@@ -194,7 +194,7 @@ def _fee_printer_table_html(rows: list, top_pool: str | None = None, accent: str
             _html.escape(pf.fmt_pct2(row.get("fee_tvl"))),
             _html.escape(pf.fmt_pct2(row.get("fee_active_tvl"))),
             _html.escape(pf.fmt_usd(row.get("net_deposits"))),
-            _html.escape(pf.fmt_times_plain(pf.fee_active_volatility_product(row))),
+            _html.escape(pf.fmt_times_plain(pf.fee_active_per_volatility(row))),
             _html.escape(pf.fmt_usd2(row["avg_volume"])),
             _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row))),
             _html.escape(pf.fmt_ratio_pct(pf.avg_fee_tvl_ratio(row), digits=3)),

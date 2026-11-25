@@ -6,11 +6,12 @@ Permintaan user: ubah filter Scan ALL dan hapus total filter FEE PRINTER lama.
 
 - Listing: `timeframe=24h`, `category=top`, tanpa `sort_by`. Filter server sama dengan curl user. Dua batas waktu (token dibuat ≤ sekarang, pool dibuat ≤ sekarang − 24 jam) dihitung ulang tiap scan, karena nilai tetap di curl akan membuat pool baru tidak pernah masuk.
 - FEE PRINTER: volatility 0,01–3 % (inklusif), fee/active TVL ≥ 2 × volatility, net deposit ≥ $10.000.
-- Urut `fee_active_tvl_ratio × volatility` terbesar dulu. Baris kuning tetap memakai avg volume ÷ TVL.
+- Urut `fee_active_tvl_ratio ÷ volatility` terbesar dulu (diubah dari × atas permintaan user, sesuai saran asisten). Baris kuning tetap memakai avg volume ÷ TVL.
 - Dihapus total: band 12H/4H (1–3 ×), listing 4H, pemisahan SPOT, umur pool 12 jam, TVL ≥ $20K, volume/TVL ≥ 100 %, fee/TVL ≥ 5 %, kolom Fee/TVL ÷ volatility dan selisih.
 - Alert 15 menit: RINGKASAN bila ada pool, heartbeat bila tidak. State ditulis hanya saat ada alert baru.
 - Tes: `tests/test_pool_flow.py` (63) dan `tests/test_pool_flow_app.py` ditulis ulang untuk aturan baru.
-- Keputusan yang perlu dikonfirmasi user: perkalian dihitung sebagai `fee/active TVL × volatility`; "max volatility 3%" dibaca `volatility ≤ 3`.
+- Keputusan user: urutan memakai `fee/active TVL ÷ volatility`. "Max volatility 3%" dibaca `volatility ≤ 3`.
+- Daftar listing 24H dari curl user: user menegaskan itu sudah seluruh pool (filter sudah di Meteora).
 
 ## 2026-10-14 — Analisis wallet COCK 1 Okt 2026 (sampel parsial)
 

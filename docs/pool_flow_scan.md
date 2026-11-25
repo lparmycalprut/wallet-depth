@@ -78,8 +78,8 @@ Setiap elemen `data` adalah satu pool. Field yang dipakai:
    - `fee_active_tvl_ratio ≥ 2 × volatility`,
    - `net_deposits ≥ 10.000`.
    Pool tanpa salah satu nilai itu tidak lolos.
-5. **Urutan** (`fee_printer_rows`): perkalian `fee_active_tvl_ratio × volatility`,
-   **terbesar dulu**. Seri mengikuti urutan listing (sort stabil).
+5. **Urutan** (`fee_printer_rows`): rasio `fee_active_tvl_ratio ÷ volatility`,
+   **terbesar dulu** (permintaan user, 2026-11-24, sesuai saran asisten). Seri mengikuti urutan listing (sort stabil).
 
 Hasil langkah 5 = tabel FEE PRINTER dan isi RINGKASAN. Tidak ada tabel atau label lain.
 
@@ -100,7 +100,7 @@ Hasil langkah 5 = tabel FEE PRINTER dan isi RINGKASAN. Tidak ada tabel atau labe
 ## 6. RINGKASAN dan alert Telegram
 
 - **RINGKASAN** di halaman = `summary_rows(result)`: hanya pool FEE PRINTER, urutan sama dengan tabel.
-  Kolom: Token/pool, Asal tabel (selalu `FEE PRINTER`), Fee/active TVL, Volatility, perkalian.
+  Kolom: Token/pool, Asal tabel (selalu `FEE PRINTER`), Fee/active TVL, Volatility, fee/active ÷ volatility.
 - **Alert Telegram** (`scripts/pool_flow_alert.py`) memakai daftar yang sama.
   - Jadwal: GitHub Actions `.github/workflows/pool-flow-best.yml`, cron `7,22,37,52 * * * *` (tiap 15 menit, UTC).
   - Pemicu utama: cron eksternal memanggil `workflow_dispatch` (GitHub API, ref `main`) tiap 15 menit.
@@ -110,7 +110,7 @@ Hasil langkah 5 = tabel FEE PRINTER dan isi RINGKASAN. Tidak ada tabel atau labe
   - Scan gagal: pesan `❌ Scan gagal`, exit 1. Telegram gagal atau kredensial kosong: exit 1
     dan state tidak disimpan.
   - Setiap pesan: nama, label `[FEE PRINTER]`, tag `🆕 baru` atau `🔁 sudah pernah · alert #N`,
-    fee/active TVL, volatility, net deposit, perkalian, peringatan keamanan, tautan, dan tombol 📋 CA.
+    fee/active TVL, volatility, net deposit, fee/active ÷ volatility, peringatan keamanan, tautan, dan tombol 📋 CA.
   - State di `pool_flow_state.json` hanya berubah bila ada alert baru: `best_alert.next_no`,
     `best_alert.last_no[pool]`, dan `alerts` (dibatasi 300 entri).
   - Secret: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
@@ -121,8 +121,8 @@ Hasil langkah 5 = tabel FEE PRINTER dan isi RINGKASAN. Tidak ada tabel atau labe
   (`2,98` = 2,98 %). Rumus dan window Meteora belum dikonfirmasi (issue
   https://github.com/MeteoraAg/docs/issues/82 masih terbuka). Jangan menyamakannya dengan
   volatility accumulator on-chain.
-- **Perkalian** `fee_active_tvl_ratio × volatility` (2026-11-24) adalah pilihan implementasi
-  untuk "hasil perkalian". Bila user punya rumus lain, ubah `fee_active_volatility_product`.
+- **Rasio** `fee_active_tvl_ratio ÷ volatility` (2026-11-24, permintaan user: "sesuai saranmu")
+  dipakai untuk urutan. Fungsinya `fee_active_per_volatility`.
 - **Interpretasi "max volatility 3%"** = `volatility ≤ 3` (dalam persen, inklusif).
 - **`avg_volume` dan `avg_fee` "per menit"** dipakai apa adanya sesuai label UI.
 - **Angka ambang** (3 %, 2 ×, $10.000, dan batas filter server) adalah keputusan user.
@@ -134,13 +134,13 @@ Hasil langkah 5 = tabel FEE PRINTER dan isi RINGKASAN. Tidak ada tabel atau labe
 2. Buang duplikat `pool_address`.
 3. Buang pool dengan mint/freeze authority aktif atau `top_holders_pct > 30`.
 4. Ambil pool dengan `0,01 ≤ volatility ≤ 3`, `fee_active_tvl_ratio ≥ 2 × volatility`, dan `net_deposits ≥ 10.000`.
-5. Urut `fee_active_tvl_ratio × volatility` terbesar dulu.
+5. Urut `fee_active_tvl_ratio ÷ volatility` terbesar dulu.
 6. Tampilkan atau kirim hanya pool FEE PRINTER tersebut. Jangan memasukkan pool lain ke RINGKASAN.
 
 ## 9. Lokasi kode dan tes
 
 - Logika: `pool_flow.py` (`FLOW_*`, `flow_server_filter`, `evaluate_pool`, `fee_printer_ok`,
-  `fee_printer_rows`, `fee_active_volatility_product`, `summary_rows`, `summary_alert_text`).
+  `fee_printer_rows`, `fee_active_per_volatility`, `summary_rows`, `summary_alert_text`).
 - Tampilan: `pool_flow_ui.py` (`render_pool_flow_page`, `_render_scan_result`, `_render_summary`,
   `_fee_printer_table_html`).
 - Alert: `scripts/pool_flow_alert.py`, `.github/workflows/pool-flow-best.yml`.
