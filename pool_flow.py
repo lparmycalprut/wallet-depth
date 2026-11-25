@@ -6,7 +6,7 @@ FEE PRINTER (permintaan user, 2026-11-24):
   (``flow_server_filter``, curl user) dan dua batas waktu yang dihitung ulang tiap scan.
 - Syarat lokal: volatility 0,01–3 %, fee/active TVL ≥ 2 × volatility, net deposit ≥ 10.000 USD.
 - Keamanan tetap: blokir bila mint/freeze authority aktif atau top holders > 30 %.
-- Urutan: fee/active TVL × volatility terbesar dulu.
+- Urutan: fee/active TVL ÷ volatility terbesar dulu.
 - Alert Telegram (tiap 15 menit): RINGKASAN, atau heartbeat bila tidak ada pool.
 """
 from __future__ import annotations
@@ -363,7 +363,7 @@ def fmt_ratio_pct(value, digits: int = 2) -> str:
 
 
 def fmt_times_plain(value) -> str:
-    """Angka perkalian (%·%) dengan 2 desimal, mis. ``24,55``. ``—`` bila kosong."""
+    """Angka rasio dengan 2 desimal, mis. ``24,55``. ``—`` bila kosong."""
     if value is None:
         return "—"
     return f"{value:.2f}".replace(".", ",")
@@ -396,16 +396,16 @@ def avg_fee_tvl_ratio(result: dict):
     return avg / tvl
 
 
-def fee_active_volatility_product(item: dict):
-    """Fee/active TVL × volatility (%·%). Dasar urutan FEE PRINTER (permintaan user, 2026-11-24).
+def fee_active_per_volatility(item: dict):
+    """Fee/active TVL ÷ volatility. Dasar urutan FEE PRINTER (permintaan user, 2026-11-24).
 
-    ``None`` bila salah satu tidak ada.
+    ``None`` bila salah satu tidak ada atau volatility ≤ 0.
     """
     fee_active = item.get("fee_active_tvl")
     vol = item.get("volatility")
-    if fee_active is None or vol is None:
+    if fee_active is None or vol is None or vol <= 0:
         return None
-    return fee_active * vol
+    return fee_active / vol
 
 
 def fee_printer_ok(item: dict) -> bool:
@@ -427,12 +427,12 @@ def fee_printer_ok(item: dict) -> bool:
 
 
 def fee_printer_rows(passing: list) -> list:
-    """Pool FEE PRINTER: lolos ``fee_printer_ok``, urut perkalian fee/active TVL × volatility terbesar dulu.
+    """Pool FEE PRINTER: lolos ``fee_printer_ok``, urut fee/active TVL ÷ volatility terbesar dulu.
 
     Seri: urutan listing (sort stabil).
     """
     rows = [item for item in passing if fee_printer_ok(item)]
-    return sorted(rows, key=lambda item: -(fee_active_volatility_product(item) or 0.0))
+    return sorted(rows, key=lambda item: -(fee_active_per_volatility(item) or 0.0))
 
 
 def summary_rows(result: dict) -> list:
@@ -589,9 +589,9 @@ def summary_alert_text(no: int, entries: list, seen: dict) -> str:
         name = row.get("pool_name") or pool[:6]
         lines.append("")
         lines.append(f"<b>{_h(row['symbol'])}</b> · {_h(name)}  [{_h(label)}]  {tag}")
-        product = fee_active_volatility_product(row)
+        ratio = fee_active_per_volatility(row)
         lines.append(f"📊 fee/active TVL {fmt_pct2(row.get('fee_active_tvl'))} · volatility {fmt_pct2(row.get('volatility'))}"
-                     f" · net {fmt_usd(row.get('net_deposits'))} · perkalian {fmt_times_plain(product)}")
+                     f" · net {fmt_usd(row.get('net_deposits'))} · fee/active ÷ volatility {fmt_times_plain(ratio)}")
         if row.get("warnings"):
             lines.append("⚠️ Peringatan keamanan: " + _h("; ".join(row["warnings"])))
         lines.extend(alert_link_lines(row.get("mint") or "", pool))
